@@ -16,6 +16,7 @@ class MiniCPMApiLLM(LLM):
     timeout: int = 120
     temperature: float = 0.5
     top_p: float = 0.8
+    max_length: int = 1024
     repetition_penalty: float = 1.02
 
     @property
@@ -31,8 +32,10 @@ class MiniCPMApiLLM(LLM):
     ) -> str:
         payload = {
             "prompt": prompt,
+            "use_history": False,
             "temperature": kwargs.get("temperature", self.temperature),
             "top_p": kwargs.get("top_p", self.top_p),
+            "max_length": kwargs.get("max_length", self.max_length),
             "repetition_penalty": kwargs.get(
                 "repetition_penalty",
                 self.repetition_penalty,

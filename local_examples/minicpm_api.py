@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -7,8 +8,17 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from local_examples.rag_vector_store import (
+    DEFAULT_DOCS_DIR,
+    DEFAULT_INDEX_PATH,
+    build_index,
+    format_context,
+    index_stats,
+    search,
+)
 
-# Current stage: model deployment usage.
+
+# Current stage: application integration.
 # This FastAPI app wraps the already verified local MiniCPM inference flow as
 # an HTTP API so browsers, scripts, and future web demos can call the model.
 MODEL_DIR = (
@@ -17,11 +27,14 @@ MODEL_DIR = (
     / "OpenBMB"
     / "MiniCPM-2B-sft-fp32"
 )
+ADAPTER_DIR = os.environ.get("MINICPM_ADAPTER_DIR")
+WEB_DEMO_PATH = Path(__file__).with_name("web_demo.html")
 
 app = FastAPI(title="MiniCPM Local API")
 
 tokenizer = None
 model = None
+sessions: dict[str, list[dict[str, str]]] = {}
 
 WEB_DEMO_HTML = """
 <!doctype html>
@@ -277,8 +290,24 @@ WEB_DEMO_HTML = """
 
 class ChatRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
+    session_id: str = "default"
+    use_history: bool = True
     temperature: float = 0.5
     top_p: float = 0.8
+    max_length: int = 1024
+    repetition_penalty: float = 1.02
+
+
+class ResetRequest(BaseModel):
+    session_id: str = "default"
+
+
+class RagRequest(BaseModel):
+    prompt: str = Field(..., min_length=1)
+    top_k: int = Field(default=4, ge=1, le=8)
+    temperature: float = 0.3
+    top_p: float = 0.8
+    max_length: int = 1200
     repetition_penalty: float = 1.02
 
 
@@ -288,8 +317,57 @@ def torch_gc() -> None:
         torch.cuda.ipc_collect()
 
 
+def attach_adapter_if_configured(base_model):
+    if not ADAPTER_DIR:
+        return base_model
+
+    adapter_path = Path(ADAPTER_DIR)
+    if not adapter_path.exists():
+        raise FileNotFoundError(f"Adapter directory does not exist: {adapter_path}")
+
+    try:
+        from peft import PeftModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "MINICPM_ADAPTER_DIR was set, but peft is not installed."
+        ) from exc
+
+    print(f"loading adapter: {adapter_path}")
+    return PeftModel.from_pretrained(base_model, adapter_path)
+
+
+def call_chat_model(prompt: str, history: list[dict[str, str]], request) -> tuple[str, list]:
+    chat_owner = model
+    chat_fn = getattr(chat_owner, "chat", None)
+    if chat_fn is None and hasattr(chat_owner, "base_model"):
+        base_model = getattr(chat_owner.base_model, "model", None)
+        chat_fn = getattr(base_model, "chat", None)
+    if chat_fn is None:
+        raise RuntimeError("Loaded model does not expose a MiniCPM chat method.")
+
+    return chat_fn(
+        tokenizer,
+        prompt,
+        history=history,
+        max_length=request.max_length,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        repetition_penalty=request.repetition_penalty,
+    )
+
+
+def ensure_rag_index() -> dict[str, int | bool]:
+    stats = index_stats(DEFAULT_INDEX_PATH)
+    if not stats["exists"] or stats["chunks"] == 0:
+        build_index(DEFAULT_DOCS_DIR, DEFAULT_INDEX_PATH)
+        stats = index_stats(DEFAULT_INDEX_PATH)
+    return stats
+
+
 @app.get("/", response_class=HTMLResponse)
 def web_demo():
+    if WEB_DEMO_PATH.exists():
+        return WEB_DEMO_PATH.read_text(encoding="utf-8")
     return WEB_DEMO_HTML
 
 
@@ -317,6 +395,7 @@ def load_model() -> None:
         device_map=device_map,
         trust_remote_code=True,
     )
+    model = attach_adapter_if_configured(model)
     model.eval()
     print("model ready.")
 
@@ -327,6 +406,9 @@ def health():
         "status": "ok",
         "model_loaded": model is not None and tokenizer is not None,
         "cuda_available": torch.cuda.is_available(),
+        "active_sessions": len(sessions),
+        "rag_index": index_stats(DEFAULT_INDEX_PATH),
+        "adapter_dir": ADAPTER_DIR,
     }
 
 
@@ -335,18 +417,86 @@ def chat(request: ChatRequest):
     if model is None or tokenizer is None:
         return {"status": 503, "response": "", "error": "model is not loaded"}
 
-    response, _ = model.chat(
-        tokenizer,
-        request.prompt,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        repetition_penalty=request.repetition_penalty,
+    history = sessions.setdefault(request.session_id, []) if request.use_history else []
+    response, updated_history = call_chat_model(request.prompt, history, request)
+    if request.use_history:
+        sessions[request.session_id] = updated_history
+    torch_gc()
+
+    return {
+        "status": 200,
+        "session_id": request.session_id,
+        "prompt": request.prompt,
+        "response": response,
+        "history_turns": len(sessions.get(request.session_id, [])) // 2,
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@app.post("/reset")
+def reset(request: ResetRequest):
+    sessions.pop(request.session_id, None)
+    torch_gc()
+    return {
+        "status": 200,
+        "session_id": request.session_id,
+        "message": "session reset",
+    }
+
+
+@app.get("/rag/status")
+def rag_status():
+    return {
+        "status": 200,
+        "docs_dir": str(DEFAULT_DOCS_DIR),
+        "index_path": str(DEFAULT_INDEX_PATH),
+        "index": index_stats(DEFAULT_INDEX_PATH),
+    }
+
+
+@app.post("/rag/rebuild")
+def rag_rebuild():
+    chunks = build_index(DEFAULT_DOCS_DIR, DEFAULT_INDEX_PATH)
+    return {
+        "status": 200,
+        "docs_dir": str(DEFAULT_DOCS_DIR),
+        "index_path": str(DEFAULT_INDEX_PATH),
+        "indexed_chunks": chunks,
+        "index": index_stats(DEFAULT_INDEX_PATH),
+    }
+
+
+@app.post("/rag/query")
+def rag_query(request: RagRequest):
+    if model is None or tokenizer is None:
+        return {"status": 503, "response": "", "error": "model is not loaded"}
+
+    ensure_rag_index()
+    chunks = search(request.prompt, DEFAULT_INDEX_PATH, top_k=request.top_k)
+    context = format_context(chunks)
+    rag_prompt = (
+        "请只根据下面的资料回答问题。如果资料不足，就明确说资料不足，"
+        "不要编造资料中没有的信息。\n\n"
+        f"资料：\n{context}\n\n"
+        f"问题：{request.prompt}\n"
+        "回答："
     )
+
+    response, _ = call_chat_model(rag_prompt, [], request)
     torch_gc()
 
     return {
         "status": 200,
         "prompt": request.prompt,
         "response": response,
+        "sources": [
+            {
+                "source": chunk.source,
+                "chunk_index": chunk.chunk_index,
+                "score": round(chunk.score, 4),
+                "text": chunk.text,
+            }
+            for chunk in chunks
+        ],
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

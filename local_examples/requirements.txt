@@ -2,6 +2,7 @@ accelerate
 fastapi
 langchain-core
 modelscope
+peft==0.7.1
 requests
 sentencepiece
 transformers==4.36.2

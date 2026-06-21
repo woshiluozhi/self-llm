@@ -1,6 +1,10 @@
 # Current stage: model deployment usage.
 # Starts the local MiniCPM FastAPI service in the background.
 
+param(
+    [string]$AdapterDir = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -16,6 +20,14 @@ $existing = Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction Sile
 if ($existing) {
     Write-Host "API service is already listening on port 8000. PID: $($existing.OwningProcess)"
     exit 0
+}
+
+if ($AdapterDir) {
+    $ResolvedAdapterDir = (Resolve-Path -LiteralPath $AdapterDir).Path
+    $env:MINICPM_ADAPTER_DIR = $ResolvedAdapterDir
+    Write-Host "Adapter: $ResolvedAdapterDir"
+} else {
+    Remove-Item Env:MINICPM_ADAPTER_DIR -ErrorAction SilentlyContinue
 }
 
 $process = Start-Process `
