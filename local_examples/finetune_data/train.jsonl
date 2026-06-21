@@ -1,0 +1,8 @@
+{"instruction":"环境配置阶段的目标是什么？","output":"环境配置阶段的目标是准备 Conda、Python、CUDA、PyTorch、Transformers 和模型下载工具，让机器具备运行开源大模型的能力。"}
+{"instruction":"模型部署使用阶段要完成什么？","output":"模型部署使用阶段要完成模型下载、本地推理、命令行聊天、FastAPI 接口和 WebDemo，让模型能被人和程序调用。"}
+{"instruction":"LangChain 在本项目里有什么作用？","output":"LangChain 在本项目里负责把提示词、检索、模型调用和输出处理串成流程，它不是模型本身，而是应用编排工具。"}
+{"instruction":"RAG 的全称是什么？","output":"RAG 的全称是 Retrieval-Augmented Generation，中文通常叫检索增强生成。"}
+{"instruction":"RAG 的基本流程是什么？","output":"RAG 的基本流程是先从文档或知识库中检索相关资料，再把资料和问题一起交给模型生成答案。"}
+{"instruction":"LoRA 是什么？","output":"LoRA 是一种参数高效微调方法，它通常只训练少量低秩适配器参数，显存成本比全量微调低。"}
+{"instruction":"P-tuning 是什么？","output":"P-tuning 会训练一组可学习的软提示词，让模型在不修改主体参数的情况下适配特定任务。"}
+{"instruction":"全量微调和 LoRA 的区别是什么？","output":"全量微调会更新模型全部参数，成本最高；LoRA 只训练少量适配器参数，成本更低，更适合本地学习验证。"}
