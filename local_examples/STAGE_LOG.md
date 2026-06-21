@@ -1,6 +1,6 @@
 # Stage Log
 
-Current stage: model deployment usage.
+Current stage: application integration.
 
 Completed:
 
@@ -11,7 +11,12 @@ Completed:
 - Added a command-line chat loop.
 - Added a FastAPI `/chat` endpoint.
 - Added a Python API client and verified end-to-end HTTP calling.
+- Verified manual Swagger `/docs` calling for `POST /chat`.
+- Added a browser WebDemo at `/`.
+- Added scripts to start, stop, and inspect the local API runtime.
+- Added LangChain integration through the local FastAPI endpoint.
+- Added a minimal local-document RAG example.
 
 Next suggested stage:
 
-- Build a simple WebDemo chat page on top of the FastAPI service.
+- Move toward task-specific application work, then start microtuning only after the deployment and application flow is comfortable.

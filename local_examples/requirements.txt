@@ -1,0 +1,8 @@
+accelerate
+fastapi
+langchain-core
+modelscope
+requests
+sentencepiece
+transformers==4.36.2
+uvicorn
